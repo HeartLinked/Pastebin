@@ -105,7 +105,6 @@ func con() *mongo.Client {
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println(client)
 	if err := client.Ping(context.TODO(), readpref.Primary()); err != nil {
 		panic(err)
 	}
