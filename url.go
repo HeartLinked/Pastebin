@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/sirupsen/logrus"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"math/rand"
@@ -37,6 +38,30 @@ func Queryurl(client *mongo.Client, s string) (int, File) {
 	collection := client.Database(Database).Collection(Collection)
 	result := File{}
 	err := collection.FindOne(context.TODO(), bson.D{{"url", s}}).Decode(&result)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			// This error means your query did not match any documents.
+			fmt.Println("sdasdsa")
+			return 0, result
+		}
+		panic(err)
+	}
+	return 1, result
+}
+
+func Updateurl(client *mongo.Client, s string) (int, File) {
+	collection := client.Database(Database).Collection(Collection)
+	filter := bson.D{{"url", s}}
+	result := File{}
+	err := collection.FindOne(context.TODO(), filter).Decode(&result)
+	before := result.Times
+	logrus.SetLevel(logrus.TraceLevel)
+	logrus.Trace("trace msg")
+	if before <= 1 {
+		collection.DeleteMany(context.TODO(), filter)
+	} else {
+		collection.UpdateOne(context.TODO(), filter, bson.D{{"$set", bson.D{{"times", before - 1}}}})
+	}
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
 			// This error means your query did not match any documents.

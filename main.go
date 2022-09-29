@@ -174,21 +174,24 @@ func setupRouter(client *mongo.Client) *gin.Engine {
 				"code":    0,
 				"data":    "",
 			})
+		} else if FILE.Times <= 0 {
+			c.JSON(http.StatusNotFound, gin.H{
+				"message": "GET",
+				"code":    0,
+				"data":    "",
+			})
 		} else if FILE.Password != "" {
 			// TODO: session
 			c.Redirect(http.StatusMovedPermanently, "/pastebin/verify?url="+path)
 
 		} else {
+			Updateurl(client, path)
 			permissions := 0777 // or whatever you need
 			err := ioutil.WriteFile("file", FILE.Data, fs.FileMode(permissions))
 			if err != nil {
 				// handle error
 			}
 			c.FileAttachment("file", FILE.Name)
-			c.JSON(http.StatusOK, gin.H{
-				"message": "GET",
-				"code":    0,
-			})
 		}
 	})
 	return r
