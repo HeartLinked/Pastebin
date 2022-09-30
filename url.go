@@ -35,7 +35,7 @@ func Generateurl() string {
 }
 
 func Queryurl(client *mongo.Client, s string) (int, File) {
-	collection := client.Database(Database).Collection(Collection)
+	collection := client.Database(Database).Collection("data")
 	result := File{}
 	err := collection.FindOne(context.TODO(), bson.D{{"url", s}}).Decode(&result)
 	if err != nil {
@@ -50,7 +50,7 @@ func Queryurl(client *mongo.Client, s string) (int, File) {
 }
 
 func Updateurl(client *mongo.Client, s string) (int, File) {
-	collection := client.Database(Database).Collection(Collection)
+	collection := client.Database(Database).Collection("data")
 	filter := bson.D{{"url", s}}
 	result := File{}
 	err := collection.FindOne(context.TODO(), filter).Decode(&result)

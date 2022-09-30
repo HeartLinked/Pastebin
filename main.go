@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"github.com/gin-gonic/gin"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
@@ -18,13 +20,17 @@ import (
 	"time"
 )
 
-const Database = "jim"
+const Database = "pastebin"
 
 const Collection = "test"
 
 var suffix = []string{"txt", "md", "tex", "csv"}
 
 type File struct {
+	ID        primitive.ObjectID `bson:"_id,omitempty"`
+	CreatedAt time.Time          `bson:"createdAt,omitempty"`
+	Timestamp time.Time          `bson:"timestamp,omitempty"`
+
 	Data     []byte `bson:"data" json:"data"`
 	Name     string `bson:"name" json:"name"`
 	Url      string `bson:"url" json:"url"`
@@ -32,8 +38,41 @@ type File struct {
 	Times    int    `bson:"times" json:"times"`
 }
 
+type Verify struct {
+	ID        primitive.ObjectID `bson:"_id,omitempty"`
+	CreatedAt time.Time          `bson:"createdAt,omitempty"`
+	Timestamp time.Time          `bson:"timestamp,omitempty"`
+
+	SessionID string   `bson:"sessionID" json:"sessionID"`
+	Url       []string `bson:"url" json:"url"`
+}
+
+func DataInit(client *mongo.Client) {
+	collection := client.Database(Database).Collection("data")
+	model := mongo.IndexModel{
+		Keys:    bson.M{"createdAt": 1},
+		Options: options.Index().SetExpireAfterSeconds(0),
+	}
+	_, err := collection.Indexes().CreateOne(context.TODO(), model)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func VerifyInit(client *mongo.Client) {
+	collection := client.Database(Database).Collection("verify")
+	model := mongo.IndexModel{
+		Keys:    bson.M{"createdAt": 1},
+		Options: options.Index().SetExpireAfterSeconds(30 * 60),
+	}
+	_, err := collection.Indexes().CreateOne(context.TODO(), model)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
 func Installfile(client *mongo.Client, file File) {
-	collection := client.Database(Database).Collection(Collection)
+	collection := client.Database(Database).Collection("data")
 	one, err := collection.InsertOne(context.TODO(), file)
 	if err != nil {
 		panic(err)
@@ -94,6 +133,37 @@ func Passwordverify(cilent *mongo.Client, s string, url string) bool {
 	return false
 }
 
+func InsertVerify(client *mongo.Client, sessionID string, url string) {
+	collection := client.Database(Database).Collection("verify")
+	result := Verify{}
+	filter := bson.D{{"sessionID", sessionID}}
+	err := collection.FindOne(context.TODO(), filter).Decode(&result)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			// This error means your query did not match any documents.
+			var t = make([]string, 1024)
+			t[0] = url
+			result = Verify{
+				ID:        primitive.ObjectID{},
+				CreatedAt: time.Time{},
+				Timestamp: time.Time{},
+				SessionID: sessionID,
+				Url:       t,
+			}
+			_, err := collection.InsertOne(context.TODO(), result)
+			if err != nil {
+				panic(err)
+			}
+		} else {
+			panic(err)
+		}
+	} else {
+		t := result.Url
+		t[len(t)] = url
+		collection.UpdateOne(context.TODO(), filter, bson.D{{"$set", bson.D{{"url", t}}}})
+	}
+}
+
 func con() *mongo.Client {
 	serverAPIOptions := options.ServerAPI(options.ServerAPIVersion1)
 	clientOptions := options.Client().
@@ -109,6 +179,10 @@ func con() *mongo.Client {
 		panic(err)
 	}
 	fmt.Println("Successfully connected and pinged.")
+
+	DataInit(client)
+	VerifyInit(client)
+
 	return client
 }
 
@@ -130,6 +204,7 @@ func setupRouter(client *mongo.Client) *gin.Engine {
 			sessionID := Generateurl()
 			c.SetCookie("sessionID", sessionID, 1800, "/", "localhost", false, true)
 			c.String(http.StatusOK, "VERIFY SUCCESS!")
+			InsertVerify(client, sessionID, paramurl)
 		} else {
 			c.String(http.StatusOK, "VERIFY FAIL!")
 		}
@@ -139,8 +214,12 @@ func setupRouter(client *mongo.Client) *gin.Engine {
 		var file *File = new(File)
 		times := c.DefaultPostForm("times", "1")
 		file.Times, _ = strconv.Atoi(times)
+		expire := c.DefaultPostForm("expire", "3600")
+		int_expire, _ := strconv.Atoi(expire)
 		file.Password = c.PostForm("password")
 		file.Url = Generateurl()
+		file.Timestamp = time.Now()
+		file.CreatedAt = time.Now().Add(time.Second * time.Duration(int_expire))
 		var flag bool
 		var err error
 		file.Data, file.Name, flag, err = Uploadfile(c)
