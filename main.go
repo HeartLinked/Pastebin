@@ -22,8 +22,6 @@ import (
 
 const Database = "pastebin"
 
-const Collection = "test"
-
 var suffix = []string{"txt", "md", "tex", "csv"}
 
 type File struct {
@@ -98,7 +96,7 @@ func Uploadfile(c *gin.Context) (b []byte, s string, flag bool, e error) {
 		cpyname := name
 		result := strings.Split(cpyname, ".")
 		filesuffix := result[len(result)-1]
-		var check bool = false
+		var check = false
 		for i := 0; i < len(suffix); i++ {
 			if filesuffix == suffix[i] {
 				check = true
@@ -160,7 +158,10 @@ func InsertVerify(client *mongo.Client, sessionID string, url string) {
 	} else {
 		t := result.Url
 		t[len(t)] = url
-		collection.UpdateOne(context.TODO(), filter, bson.D{{"$set", bson.D{{"url", t}}}})
+		_, err := collection.UpdateOne(context.TODO(), filter, bson.D{{"$set", bson.D{{"url", t}}}})
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 }
 
@@ -205,21 +206,22 @@ func setupRouter(client *mongo.Client) *gin.Engine {
 			c.SetCookie("sessionID", sessionID, 1800, "/", "localhost", false, true)
 			c.String(http.StatusOK, "VERIFY SUCCESS!")
 			InsertVerify(client, sessionID, paramurl)
+			c.Redirect(http.StatusMovedPermanently, "/pastebin/"+paramurl)
 		} else {
 			c.String(http.StatusOK, "VERIFY FAIL!")
 		}
 	})
 
 	r.POST("/pastebin/file", func(c *gin.Context) {
-		var file *File = new(File)
+		var file = new(File)
 		times := c.DefaultPostForm("times", "1")
 		file.Times, _ = strconv.Atoi(times)
 		expire := c.DefaultPostForm("expire", "3600")
-		int_expire, _ := strconv.Atoi(expire)
+		intExpire, _ := strconv.Atoi(expire)
 		file.Password = c.PostForm("password")
 		file.Url = Generateurl()
 		file.Timestamp = time.Now()
-		file.CreatedAt = time.Now().Add(time.Second * time.Duration(int_expire))
+		file.CreatedAt = time.Now().Add(time.Second * time.Duration(intExpire))
 		var flag bool
 		var err error
 		file.Data, file.Name, flag, err = Uploadfile(c)
@@ -244,8 +246,9 @@ func setupRouter(client *mongo.Client) *gin.Engine {
 		}
 	})
 
-	r.GET("/pastebin/file/:path", func(c *gin.Context) {
+	r.GET("/pastebin/:path", func(c *gin.Context) {
 		path := c.Param("path")
+		// TODO: session
 		status, FILE := Queryurl(client, path)
 		if status == 0 {
 			c.JSON(http.StatusNotFound, gin.H{
@@ -280,6 +283,9 @@ func main() {
 	client := con()
 
 	r := setupRouter(client)
-	r.Run(":8080")
+	err := r.Run(":8080")
+	if err != nil {
+		log.Fatal()
+	}
 
 }
