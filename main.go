@@ -24,6 +24,8 @@ const Database = "pastebin"
 
 var suffix = []string{"txt", "md", "tex", "csv"}
 
+var languagelist = []string{"C", "C++", "Java", "Python", "Go", "JavaScript"}
+
 type File struct {
 	ID        primitive.ObjectID `bson:"_id,omitempty"`
 	CreatedAt time.Time          `bson:"createdAt,omitempty"`
@@ -34,6 +36,10 @@ type File struct {
 	Url      string `bson:"url" json:"url"`
 	Password string `bson:"password" json:"password,omitempty"`
 	Times    int    `bson:"times" json:"times"`
+
+	Highlight string `bson:"highlight,omitempty" json:"highlight,omitempty"`
+	Language  string `bson:"language,omitempty" json:"language,omitempty"`
+	Text      string `bson:"text,omitempty" json:"text,omitempty"`
 }
 
 type Verify struct {
@@ -246,37 +252,79 @@ func setupRouter(client *mongo.Client) *gin.Engine {
 		}
 	})
 
+	r.POST("/pastebin/submit", func(c *gin.Context) {
+		var file = new(File)
+		times := c.DefaultPostForm("times", "1")
+		file.Times, _ = strconv.Atoi(times)
+		expire := c.DefaultPostForm("expire", "3600")
+		intExpire, _ := strconv.Atoi(expire)
+		file.Password = c.PostForm("password")
+		file.Url = Generateurl()
+		file.Timestamp = time.Now()
+		file.CreatedAt = time.Now().Add(time.Second * time.Duration(intExpire))
+
+		file.Highlight = c.PostForm("times")
+		file.Text = c.PostForm("text")
+		language := c.PostForm("language")
+		file.Language = language
+
+		Installfile(client, *file)
+		c.JSON(http.StatusOK, gin.H{
+			"message": "POST",
+			"code":    0,
+			"data": gin.H{
+				"status": 0,
+				"url":    file.Url,
+			},
+		})
+
+	})
+
 	r.GET("/pastebin/:path", func(c *gin.Context) {
 		path := c.Param("path")
-		// TODO: session
-		status, FILE := Queryurl(client, path)
-		if status == 0 {
-			c.JSON(http.StatusNotFound, gin.H{
-				"message": "GET",
-				"code":    0,
-				"data":    "",
-			})
-		} else if FILE.Times <= 0 {
-			c.JSON(http.StatusNotFound, gin.H{
-				"message": "GET",
-				"code":    0,
-				"data":    "",
-			})
-		} else if FILE.Password != "" {
-			// TODO: session
-			c.Redirect(http.StatusMovedPermanently, "/pastebin/verify?url="+path)
+		sessionID, _ := c.Cookie("sessionID")
+		fmt.Println(sessionID)
+		fmt.Println(path)
+		if VerifySessionID(client, sessionID, path) == true {
 
+			returnData(client, c)
 		} else {
-			Updateurl(client, path)
+			c.Redirect(http.StatusMovedPermanently, "/pastebin/verify?url="+path)
+		}
+
+	})
+	return r
+}
+
+func returnData(client *mongo.Client, c *gin.Context) {
+	path := c.Param("path")
+	status, FILE := Queryurl(client, path)
+	if status == 0 || FILE.Times <= 0 {
+		c.JSON(http.StatusNotFound, gin.H{
+			"message": "GET",
+			"code":    0,
+			"data":    "",
+		})
+	} else {
+		Updateurl(client, path)
+
+		if FILE.Highlight == "" {
 			permissions := 0777 // or whatever you need
 			err := ioutil.WriteFile("file", FILE.Data, fs.FileMode(permissions))
 			if err != nil {
-				// handle error
+				log.Fatal(err)
 			}
 			c.FileAttachment("file", FILE.Name)
+		} else {
+			c.JSON(http.StatusOK, gin.H{
+				"message": "",
+				"code":    0,
+				"data": gin.H{
+					"text": FILE.Text,
+				},
+			})
 		}
-	})
-	return r
+	}
 }
 
 func main() {

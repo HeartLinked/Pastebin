@@ -6,6 +6,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
+	"log"
 	"math/rand"
 	"time"
 )
@@ -58,9 +59,15 @@ func Updateurl(client *mongo.Client, s string) (int, File) {
 	logrus.SetLevel(logrus.TraceLevel)
 	logrus.Trace("trace msg")
 	if before <= 1 {
-		collection.DeleteMany(context.TODO(), filter)
+		_, err := collection.DeleteMany(context.TODO(), filter)
+		if err != nil {
+			log.Fatal(err)
+		}
 	} else {
-		collection.UpdateOne(context.TODO(), filter, bson.D{{"$set", bson.D{{"times", before - 1}}}})
+		_, err := collection.UpdateOne(context.TODO(), filter, bson.D{{"$set", bson.D{{"times", before - 1}}}})
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
@@ -71,4 +78,24 @@ func Updateurl(client *mongo.Client, s string) (int, File) {
 		panic(err)
 	}
 	return 1, result
+}
+
+func VerifySessionID(client *mongo.Client, s string, url string) bool {
+	collection := client.Database(Database).Collection("verify")
+	filter := bson.D{{"sessionID", s}}
+	result := Verify{}
+	err := collection.FindOne(context.TODO(), filter).Decode(&result)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			// This error means your query did not match any documents.
+			return false
+		}
+		panic(err)
+	}
+	for _, Url := range result.Url {
+		if Url == url {
+			return true
+		}
+	}
+	return false
 }
