@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/gin-gonic/gin"
+	"github.com/sirupsen/logrus"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -24,20 +25,22 @@ const Database = "pastebin"
 
 var suffix = []string{"txt", "md", "tex", "csv"}
 
-var languagelist = []string{"C", "C++", "Java", "Python", "Go", "JavaScript"}
+//var languagelist = []string{"C", "C++", "Java", "Python", "Go", "JavaScript"}
 
 type File struct {
 	ID        primitive.ObjectID `bson:"_id,omitempty"`
 	CreatedAt time.Time          `bson:"createdAt,omitempty"`
 	Timestamp time.Time          `bson:"timestamp,omitempty"`
 
-	Data     []byte `bson:"data" json:"data"`
-	Name     string `bson:"name" json:"name"`
-	Url      string `bson:"url" json:"url"`
-	Password string `bson:"password" json:"password,omitempty"`
-	Times    int    `bson:"times" json:"times"`
+	Data     []byte `bson:"data,omitempty" json:"data"`
+	Name     string `bson:"name,omitempty" json:"name"`
+	Url      string `bson:"url,omitempty" json:"url"`
+	Password string `bson:"password,omitempty" json:"password,omitempty"`
+	Times    int    `bson:"times,omitempty" json:"times"`
 
-	Highlight string `bson:"highlight,omitempty" json:"highlight,omitempty"`
+	Category string `bson:"category,omitempty" json:"category,omitempty"`
+
+	Highlight string `bson:"highlight" json:"highlight"`
 	Language  string `bson:"language,omitempty" json:"language,omitempty"`
 	Text      string `bson:"text,omitempty" json:"text,omitempty"`
 }
@@ -84,7 +87,7 @@ func Installfile(client *mongo.Client, file File) {
 	fmt.Println(one)
 }
 
-func Uploadfile(c *gin.Context) (b []byte, s string, flag bool, e error) {
+func Uploadfile(c *gin.Context) (b []byte, s string, flag bool, e error, filesuffix string) {
 	file, fileheader, err := c.Request.FormFile("data")
 	name := fileheader.Filename
 	size := fileheader.Size
@@ -101,11 +104,12 @@ func Uploadfile(c *gin.Context) (b []byte, s string, flag bool, e error) {
 	} else {
 		cpyname := name
 		result := strings.Split(cpyname, ".")
-		filesuffix := result[len(result)-1]
+		filesuffix = result[len(result)-1]
 		var check = false
 		for i := 0; i < len(suffix); i++ {
 			if filesuffix == suffix[i] {
 				check = true
+				break
 			}
 		}
 		if check != true {
@@ -120,13 +124,13 @@ func Uploadfile(c *gin.Context) (b []byte, s string, flag bool, e error) {
 		}
 	}
 	if err != nil {
-		return nil, name, flag, err
+		return nil, name, flag, err, filesuffix
 	}
 	buf := bytes.NewBuffer(nil)
 	if _, err := io.Copy(buf, file); err != nil {
-		return nil, name, flag, err
+		return nil, name, flag, err, filesuffix
 	}
-	return buf.Bytes(), name, flag, err
+	return buf.Bytes(), name, flag, err, filesuffix
 }
 
 func Passwordverify(cilent *mongo.Client, s string, url string) bool {
@@ -145,12 +149,12 @@ func InsertVerify(client *mongo.Client, sessionID string, url string) {
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
 			// This error means your query did not match any documents.
-			var t = make([]string, 1024)
+			var t = make([]string, 1)
 			t[0] = url
 			result = Verify{
 				ID:        primitive.ObjectID{},
-				CreatedAt: time.Time{},
-				Timestamp: time.Time{},
+				CreatedAt: time.Now(),
+				Timestamp: time.Now(),
 				SessionID: sessionID,
 				Url:       t,
 			}
@@ -163,7 +167,8 @@ func InsertVerify(client *mongo.Client, sessionID string, url string) {
 		}
 	} else {
 		t := result.Url
-		t[len(t)] = url
+		t = append(t, url)
+		//t[len(t)] = url
 		_, err := collection.UpdateOne(context.TODO(), filter, bson.D{{"$set", bson.D{{"url", t}}}})
 		if err != nil {
 			log.Fatal(err)
@@ -198,8 +203,8 @@ func setupRouter(client *mongo.Client) *gin.Engine {
 
 	r.GET("/pastebin/verify", func(c *gin.Context) {
 		//param := c.Request.URL.RawQuery
-		fmt.Println()
 	})
+
 	r.POST("/pastebin/verify", func(c *gin.Context) {
 		password := c.PostForm("password")
 		param := c.Request.URL.RawQuery
@@ -208,8 +213,12 @@ func setupRouter(client *mongo.Client) *gin.Engine {
 		fmt.Println(password)
 		fmt.Println(paramurl)
 		if Passwordverify(client, password, paramurl) == true {
-			sessionID := Generateurl()
-			c.SetCookie("sessionID", sessionID, 1800, "/", "localhost", false, true)
+
+			sessionID, err := c.Cookie("sessionID")
+			if err != nil {
+				sessionID = Generateurl()
+				c.SetCookie("sessionID", sessionID, 1800, "/", "localhost", false, true)
+			}
 			c.String(http.StatusOK, "VERIFY SUCCESS!")
 			InsertVerify(client, sessionID, paramurl)
 			c.Redirect(http.StatusMovedPermanently, "/pastebin/"+paramurl)
@@ -230,7 +239,8 @@ func setupRouter(client *mongo.Client) *gin.Engine {
 		file.CreatedAt = time.Now().Add(time.Second * time.Duration(intExpire))
 		var flag bool
 		var err error
-		file.Data, file.Name, flag, err = Uploadfile(c)
+		file.Data, file.Name, flag, err, file.Category = Uploadfile(c)
+		fmt.Println(file.Category + "QQQ")
 		if flag == false && err == nil {
 			Installfile(client, *file)
 			c.JSON(http.StatusOK, gin.H{
@@ -281,12 +291,27 @@ func setupRouter(client *mongo.Client) *gin.Engine {
 	})
 
 	r.GET("/pastebin/:path", func(c *gin.Context) {
+		//c.Header("Content-Type", "text/markdown")
 		path := c.Param("path")
 		sessionID, _ := c.Cookie("sessionID")
 		fmt.Println(sessionID)
 		fmt.Println(path)
 		if VerifySessionID(client, sessionID, path) == true {
-
+			path := c.Param("path")
+			_, FILE := Queryurl(client, path)
+			fmt.Println(FILE.Category)
+			switch FILE.Category {
+			case "txt":
+				c.Header("Content-Type", "text/plain")
+			case "md":
+				c.Header("Content-Type", "text/markdown")
+			case "csv":
+				c.Header("Content-Type", "text/csv")
+			case "tex":
+				c.Header("Content-Type", "text/x-tex")
+			default:
+				c.Header("Content-Type", "text/plain")
+			}
 			returnData(client, c)
 		} else {
 			c.Redirect(http.StatusMovedPermanently, "/pastebin/verify?url="+path)
@@ -328,8 +353,8 @@ func returnData(client *mongo.Client, c *gin.Context) {
 }
 
 func main() {
+	logrus.SetLevel(logrus.TraceLevel)
 	client := con()
-
 	r := setupRouter(client)
 	err := r.Run(":8080")
 	if err != nil {

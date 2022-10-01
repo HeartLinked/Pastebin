@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"github.com/sirupsen/logrus"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -42,7 +41,6 @@ func Queryurl(client *mongo.Client, s string) (int, File) {
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
 			// This error means your query did not match any documents.
-			fmt.Println("sdasdsa")
 			return 0, result
 		}
 		panic(err)
@@ -72,7 +70,6 @@ func Updateurl(client *mongo.Client, s string) (int, File) {
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
 			// This error means your query did not match any documents.
-			fmt.Println("sdasdsa")
 			return 0, result
 		}
 		panic(err)
