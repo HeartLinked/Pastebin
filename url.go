@@ -5,7 +5,6 @@ import (
 	"github.com/sirupsen/logrus"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
-	"log"
 	"math/rand"
 	"time"
 )
@@ -18,7 +17,8 @@ func init() {
 	rand.Seed(time.Now().UnixNano())
 }
 
-func RandStr(n int) string { // 生成一个长度为m的随机字符串
+// 生成一个长度为m的随机字符串
+func randStr(n int) string {
 	result := make([]byte, n)
 	for i := 0; i < n; i++ {
 		result[i] = byteString[rand.Int31()%62]
@@ -35,7 +35,9 @@ func generateUrl() string {
 	for {
 		length := rand.Intn(25)
 		if length > 15 {
-			return RandStr(length)
+			url := randStr(length)
+			logrus.Info("Rand url generated:" + url)
+			return url
 		}
 	}
 }
@@ -48,50 +50,63 @@ func generateUrl() string {
  * @return bool : 存在数据true / 不存在数据 false
  * @return File : 数据文件结构体
  */
-func queryUrl(client *mongo.Client, s string) (bool, File) {
+func queryUrl(client *mongo.Client, s string) (error, bool, File) {
 	collection := client.Database(Database).Collection("data")
 	result := File{}
 	err := collection.FindOne(context.TODO(), bson.D{{"url", s}}).Decode(&result)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
 			// This error means your query did not match any documents.
-			return false, result
+			logrus.Info("Query data from url:" + s + ", result: FAIL")
+			return nil, false, result
+		} else {
+			logrus.Error("ERROR in query data using url:" + s)
+			return err, false, result
 		}
-		panic(err)
 	}
-	return true, result
+	logrus.Info("Query data from url:" + s + ", result: SUCCESS")
+	return nil, true, result
 }
 
-func updateUrl(client *mongo.Client, s string) (int, File) {
+/**
+ * 在访问数据以后，对数据库的数据进行更新。减少剩余的可访问次数。如果剩余次数小于等于 0 则删除该条数据。
+ *
+ * @param client : *mongo.Client
+ * @param url : 要更新的数据的 url
+ */
+func updateData(client *mongo.Client, url string) {
 	collection := client.Database(Database).Collection("data")
-	filter := bson.D{{"url", s}}
+	filter := bson.D{{"url", url}}
 	result := File{}
-	err := collection.FindOne(context.TODO(), filter).Decode(&result)
+	_ = collection.FindOne(context.TODO(), filter).Decode(&result)
 	before := result.Times
-	logrus.SetLevel(logrus.TraceLevel)
-	logrus.Trace("trace msg")
 	if before <= 1 {
+		logrus.Info("The times of visits remaining is 0.")
 		_, err := collection.DeleteMany(context.TODO(), filter)
 		if err != nil {
-			log.Fatal(err)
+			logrus.Error("Failed to delete data from database!")
+		} else {
+			logrus.Info("Updated data to set times-- successfully!")
 		}
 	} else {
 		_, err := collection.UpdateOne(context.TODO(), filter, bson.D{{"$set", bson.D{{"times", before - 1}}}})
 		if err != nil {
-			log.Fatal(err)
+			logrus.Error("Failed to reset data from database!")
+		} else {
+			logrus.Info("Updated data to set times-- successfully!")
 		}
 	}
-	if err != nil {
-		if err == mongo.ErrNoDocuments {
-			// This error means your query did not match any documents.
-			return 0, result
-		}
-		panic(err)
-	}
-	return 1, result
 }
 
-func VerifySessionID(client *mongo.Client, s string, url string) bool {
+/**
+ * 验证 SessionID 对于这个 url 是否有效。
+ *
+ * @param s : SessionID
+ * @param url : 要访问的 url：去数据库查 Session 对应的 url 列表有没有这一项
+ * @return error: 验证过程中是否出现了错误，如果出错返回交由上层处理
+ * @return bool: 验证结果是否成功 true 成功, false 失败
+ */
+func verifySessionID(client *mongo.Client, s string, url string) (error, bool) {
 	collection := client.Database(Database).Collection("verify")
 	filter := bson.D{{"sessionID", s}}
 	result := Verify{}
@@ -99,14 +114,19 @@ func VerifySessionID(client *mongo.Client, s string, url string) bool {
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
 			// This error means your query did not match any documents.
-			return false
+			logrus.Info("Verify SessionID:" + s + "with url:" + url + ", Result: FAIL")
+			return nil, false
+		} else {
+			logrus.Error("Failed to verify sessionID!")
+			return err, false
 		}
-		panic(err)
 	}
 	for _, Url := range result.Url {
 		if Url == url {
-			return true
+			logrus.Info("Verify SessionID:" + s + "with url:" + url + ", Result: FAIL")
+			return nil, true
 		}
 	}
-	return false
+	logrus.Info("Verify SessionID:" + s + "with url:" + url + ", Result: FAIL")
+	return nil, false
 }

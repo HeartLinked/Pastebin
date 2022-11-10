@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"github.com/gin-gonic/gin"
+	"github.com/sirupsen/logrus"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -27,19 +28,25 @@ const FILESIZE = 20971520
 
 var suffix = []string{"txt", "md", "tex", "csv"}
 
+// 代码和文件的存储数据结构
+
 type File struct {
-	ID        primitive.ObjectID `bson:"_id,omitempty"`
-	CreatedAt time.Time          `bson:"createdAt,omitempty"`
-	Timestamp time.Time          `bson:"timestamp,omitempty"`
+	// 主键
+	ID primitive.ObjectID `bson:"_id,omitempty"`
+	// 时间戳，用于支持 MongoDB 的 TTL
+	CreatedAt time.Time `bson:"createdAt,omitempty"`
+	Timestamp time.Time `bson:"timestamp,omitempty"`
+	Url       string    `bson:"url,omitempty" json:"url"`
+	Password  string    `bson:"password,omitempty" json:"password,omitempty"`
+	// 剩余访问次数
+	Times int    `bson:"times,omitempty" json:"times"`
+	Data  []byte `bson:"data,omitempty" json:"data"`
 
-	Data     []byte `bson:"data,omitempty" json:"data"`
+	// 对于文件：文件名，后缀名
 	Name     string `bson:"name,omitempty" json:"name"`
-	Url      string `bson:"url,omitempty" json:"url"`
-	Password string `bson:"password,omitempty" json:"password,omitempty"`
-	Times    int    `bson:"times,omitempty" json:"times"`
-
 	Category string `bson:"category,omitempty" json:"category,omitempty"`
 
+	// 对于代码：是否高亮，语言类型，文本内容
 	Highlight string `bson:"highlight" json:"highlight"`
 	Language  string `bson:"language,omitempty" json:"language,omitempty"`
 	Text      string `bson:"text,omitempty" json:"text,omitempty"`
@@ -52,6 +59,7 @@ type File struct {
  */
 
 func DataInit(client *mongo.Client) {
+	logrus.Info("Initialize data TTL function...")
 	collection := client.Database(Database).Collection("data")
 	model := mongo.IndexModel{
 		Keys:    bson.M{"createdAt": 1},
@@ -59,7 +67,10 @@ func DataInit(client *mongo.Client) {
 	}
 	_, err := collection.Indexes().CreateOne(context.TODO(), model)
 	if err != nil {
-		log.Fatal(err)
+		logrus.Error(err)
+		logrus.Error("Failed to initialize the TTL function of MongoDB!")
+	} else {
+		logrus.Info("The TTL function of MongoDB was opened successfully!")
 	}
 }
 
@@ -71,8 +82,14 @@ func DataInit(client *mongo.Client) {
  * @return : error : 写入数据库错误
  */
 func installFile(client *mongo.Client, file File) error {
+	logrus.Info("Write data into Database..")
 	collection := client.Database(Database).Collection("data")
 	_, err := collection.InsertOne(context.TODO(), file)
+	if err != nil {
+		logrus.Error("ERROR in writing data into Database")
+	} else {
+		logrus.Info("Wrote data into database successfully!")
+	}
 	return err
 }
 
@@ -86,6 +103,7 @@ func installFile(client *mongo.Client, file File) error {
  */
 func checkFile(c *gin.Context, fileHeader *multipart.FileHeader) (bool, string) {
 	if fileHeader.Size > FILESIZE {
+		logrus.Info("Check File Failed: file size exceeds the maximum range")
 		c.JSON(http.StatusOK, gin.H{
 			"message": "POST",
 			"code":    0,
@@ -106,6 +124,7 @@ func checkFile(c *gin.Context, fileHeader *multipart.FileHeader) (bool, string) 
 			}
 		}
 		if check != true { // 校验失败
+			logrus.Info("Check File Failed: file suffix is illegal")
 			c.JSON(http.StatusOK, gin.H{
 				"message": "POST",
 				"code":    0,
@@ -115,6 +134,7 @@ func checkFile(c *gin.Context, fileHeader *multipart.FileHeader) (bool, string) 
 			})
 			return false, fileSuffix
 		}
+		logrus.Info("Check File Succeeded!")
 		return true, fileSuffix
 	}
 }
@@ -140,43 +160,46 @@ func getFileData(c *gin.Context, file multipart.File, fileHeader *multipart.File
 	if _, err := io.Copy(buf, file); err != nil {
 		return nil, false, fileSuffix
 	}
+	logrus.Info("Got file data successfully")
 	return buf.Bytes(), true, fileSuffix
 }
 
 /**
- * 如果在数据库中查到数据，
+ * 如果在数据库中查到数据，向前端返回数据。
  *
- * @param a :
- * @param b :
+ * @param client : *mongo
+ * @param c : *gin.Context
  * @return :
  */
 func returnData(client *mongo.Client, c *gin.Context) {
 	path := c.Param("path")
-	status, FILE := queryUrl(client, path)
-	if status == false || FILE.Times <= 0 {
-		c.JSON(http.StatusNotFound, gin.H{
-			"message": "GET",
-			"code":    0,
-			"data":    "",
-		})
-	} else {
-		updateUrl(client, path)
-
-		if FILE.Highlight == "" {
-			permissions := 0777 // or whatever you need
-			err := ioutil.WriteFile("file", FILE.Data, fs.FileMode(permissions))
-			if err != nil {
-				log.Fatal(err)
-			}
-			c.FileAttachment("file", FILE.Name)
-		} else {
-			c.JSON(http.StatusOK, gin.H{
-				"message": "",
+	_, _, FILE := queryUrl(client, path)
+	updateData(client, path)
+	// 如果是文件类型
+	if FILE.Highlight == "" {
+		permissions := 0777 // or whatever you need
+		err := ioutil.WriteFile("file", FILE.Data, fs.FileMode(permissions))
+		if err != nil {
+			//服务器写文件出现错误：500
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"message": "GET",
 				"code":    0,
 				"data": gin.H{
-					"text": FILE.Text,
+					"status": 10001,
 				},
 			})
+			log.Fatal(err)
 		}
+		c.FileAttachment("file", FILE.Name)
+	} else {
+		// 如果是代码类型
+		c.JSON(http.StatusOK, gin.H{
+			"message": "",
+			"code":    0,
+			"data": gin.H{
+				"text": FILE.Text,
+			},
+		})
 	}
+
 }

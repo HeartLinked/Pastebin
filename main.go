@@ -7,7 +7,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -41,9 +40,10 @@ func con() *mongo.Client {
 		log.Fatal(err)
 	}
 	if err := client.Ping(context.TODO(), readpref.Primary()); err != nil {
-		panic(err)
+		logrus.Fatal("FAILED to connect MongoDB!")
+	} else {
+		logrus.Info("Successfully connected MongoDB and pinged.")
 	}
-	fmt.Println("Successfully connected and pinged.")
 
 	DataInit(client)
 	VerifyInit(client)
@@ -66,7 +66,8 @@ func setupRouter(client *mongo.Client) *gin.Engine {
 	})
 
 	/**
-	 * POST方法，接收包含密码的表单。查数据库进行比对，如果通过就设置一条cookie，向数据库中添加临时条目（过期时间为 30 分钟），内容为用户的 sessionId 和该 sessionId 已被授权访问的网页地址。
+	 * POST方法，接收包含密码的表单。查数据库进行比对，如果通过就设置一条cookie，
+	 * 向数据库中添加临时条目（过期时间为 30 分钟），内容为用户的 sessionId 和该 sessionId 已被授权访问的网页地址。
 	 */
 	r.POST("/pastebin/verify", func(c *gin.Context) {
 		password := c.PostForm("password")
@@ -168,6 +169,7 @@ func setupRouter(client *mongo.Client) *gin.Engine {
 	 *
 	 */
 	r.POST("/pastebin/submit", func(c *gin.Context) {
+		logrus.Info("POST: submit text")
 		var file = new(File)
 		// 下载次数（默认1
 		times := c.DefaultPostForm("times", "1")
@@ -208,14 +210,39 @@ func setupRouter(client *mongo.Client) *gin.Engine {
 		}
 	})
 
+	/**
+	 * 试图访问获取资源。首先检查是否有有效的 SessionID，若没有则直接跳转到验证页面，
+	 *	否则检查数据库是否能查询到数据，视情况返回数据。
+	 */
 	r.GET("/pastebin/:path", func(c *gin.Context) {
 		//c.Header("Content-Type", "text/markdown")
 		path := c.Param("path")
+		logrus.Info("GET: get the data of url: " + path)
 		sessionID, _ := c.Cookie("sessionID")
-		if VerifySessionID(client, sessionID, path) == true { // 检查有无有效的sessionID
+		// 检查有无有效的sessionID
+		err, result := verifySessionID(client, sessionID, path)
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{ // TODO: API update
+				"message": "GET",
+				"code":    0,
+				"data": gin.H{
+					"status": 10001, // Session 验证出现问题
+				},
+			})
+		} else if result == true {
+			// 如果有 SessionID， 向前端查询数据，视情况是否返回文件
 			path := c.Param("path")
-			result, FILE := queryUrl(client, path)
-			if result {
+			e, result, FILE := queryUrl(client, path)
+			if e != nil {
+				c.JSON(http.StatusOK, gin.H{ // TODO: API update
+					"message": "GET",
+					"code":    0,
+					"data": gin.H{
+						"status": 10001, // 查询数据过程出现问题
+					},
+				})
+			} else if result && FILE.Times > 0 {
+				logrus.Info("Return Data: (category:" + FILE.Category + ")")
 				switch FILE.Category {
 				case "txt":
 					c.Header("Content-Type", "text/plain")
@@ -230,32 +257,32 @@ func setupRouter(client *mongo.Client) *gin.Engine {
 				}
 				returnData(client, c)
 			} else {
+				// result == false
 				c.JSON(http.StatusOK, gin.H{ // TODO: API update
 					"message": "GET",
 					"code":    0,
 					"data": gin.H{
 						"status": 10001, // 获取不到文件（数据库找不到文件）
-						"url":    path,
 					},
 				})
 			}
-
 		} else {
+			// 没有session 则跳转到验证
+			logrus.Info("Redirect to verify Page!")
 			c.Redirect(http.StatusMovedPermanently, "/pastebin/verify?url="+path)
 		}
-
 	})
-
 	return r
 }
 
 func main() {
+
 	logrus.SetLevel(logrus.TraceLevel)
 	client := con()
 	r := setupRouter(client)
 	err := r.Run(":8080")
 	if err != nil {
-		log.Fatal()
+		logrus.Fatal("ERROR in Run client in port 8080！")
 	}
 
 }

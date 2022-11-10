@@ -7,11 +7,11 @@ package main
 
 import (
 	"context"
+	"github.com/sirupsen/logrus"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
-	"log"
 	"time"
 )
 
@@ -31,6 +31,7 @@ type Verify struct {
  */
 
 func VerifyInit(client *mongo.Client) {
+	logrus.Info("Initialize session verify TTL function...")
 	collection := client.Database(Database).Collection("verify")
 	model := mongo.IndexModel{
 		Keys:    bson.M{"createdAt": 1},
@@ -38,7 +39,10 @@ func VerifyInit(client *mongo.Client) {
 	}
 	_, err := collection.Indexes().CreateOne(context.TODO(), model)
 	if err != nil {
-		log.Fatal(err)
+		logrus.Error(err)
+		logrus.Error("Failed to initialize the TTL function of MongoDB!")
+	} else {
+		logrus.Info("The TTL function of MongoDB was opened successfully!")
 	}
 }
 
@@ -50,10 +54,12 @@ func VerifyInit(client *mongo.Client) {
  * @return : 密码正确 true / 密码错误 false
  */
 func passwordVerify(client *mongo.Client, s string, url string) bool {
-	i, file := queryUrl(client, url)
+	_, i, file := queryUrl(client, url)
 	if i == false && file.Password == s {
+		logrus.Info("Password Verify succeed!")
 		return true
 	}
+	logrus.Info("Password Verify Failed!")
 	return false
 }
 
@@ -72,6 +78,7 @@ func InsertVerify(client *mongo.Client, sessionID string, url string) {
 	filter := bson.D{{"sessionID", sessionID}}
 	err := collection.FindOne(context.TODO(), filter).Decode(&result)
 	if err != nil {
+		// 如果数据库没有 Session， 插入一条
 		if err == mongo.ErrNoDocuments {
 			// This error means your query did not match any documents.
 			var t = make([]string, 1)
@@ -84,18 +91,19 @@ func InsertVerify(client *mongo.Client, sessionID string, url string) {
 				Url:       t,
 			}
 			_, err := collection.InsertOne(context.TODO(), result)
-			if err != nil {
-				log.Fatal(err)
+			if err != nil { // 向数据库插入 Session 出错
+				logrus.Error("Failed to write file from database!")
 			}
 		} else {
-			log.Fatal(err)
+			logrus.Error("Failed to query file from database!")
 		}
 	} else {
+		// 如果数据库已有 Session， 更新 Session（重新计算 30min倒计时）
 		t := result.Url
 		t = append(t, url)
 		_, err := collection.UpdateOne(context.TODO(), filter, bson.D{{"$set", bson.D{{"url", t}}}})
 		if err != nil {
-			log.Fatal(err)
+			logrus.Error("Failed to update sessionID from database!")
 		}
 	}
 }
