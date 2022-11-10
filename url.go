@@ -10,14 +10,15 @@ import (
 	"time"
 )
 
-var byteString []byte = []byte("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")
+// 随机串字符范围
+var byteString = []byte("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")
 
 func init() {
 	// 保证每次生成的随机数不一样
 	rand.Seed(time.Now().UnixNano())
 }
 
-func RandStr(n int) string {
+func RandStr(n int) string { // 生成一个长度为m的随机字符串
 	result := make([]byte, n)
 	for i := 0; i < n; i++ {
 		result[i] = byteString[rand.Int31()%62]
@@ -25,7 +26,12 @@ func RandStr(n int) string {
 	return string(result)
 }
 
-func Generateurl() string {
+/**
+ * 随机生成一条Url：长度[16, 25]
+ *
+ * @return : 生成的Url
+ */
+func generateUrl() string {
 	for {
 		length := rand.Intn(25)
 		if length > 15 {
@@ -34,21 +40,29 @@ func Generateurl() string {
 	}
 }
 
-func Queryurl(client *mongo.Client, s string) (int, File) {
+/**
+ * 从指定的Url查询数据是否存在。如果存在数据，返回true，否则返回false
+ *
+ * @param client : *mongo.Client
+ * @param s : Url string
+ * @return bool : 存在数据true / 不存在数据 false
+ * @return File : 数据文件结构体
+ */
+func queryUrl(client *mongo.Client, s string) (bool, File) {
 	collection := client.Database(Database).Collection("data")
 	result := File{}
 	err := collection.FindOne(context.TODO(), bson.D{{"url", s}}).Decode(&result)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
 			// This error means your query did not match any documents.
-			return 0, result
+			return false, result
 		}
 		panic(err)
 	}
-	return 1, result
+	return true, result
 }
 
-func Updateurl(client *mongo.Client, s string) (int, File) {
+func updateUrl(client *mongo.Client, s string) (int, File) {
 	collection := client.Database(Database).Collection("data")
 	filter := bson.D{{"url", s}}
 	result := File{}

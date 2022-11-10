@@ -1,19 +1,18 @@
+/**
+* @Author: Li Feiyang
+* @Date: 2022/11/9 10:57
+ */
+
 package main
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
-	"io"
-	"io/fs"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"strconv"
@@ -23,159 +22,13 @@ import (
 
 const Database = "pastebin"
 
-var suffix = []string{"txt", "md", "tex", "csv"}
+//var languageList = []string{"C", "C++", "Java", "Python", "Go", "JavaScript"}
 
-//var languagelist = []string{"C", "C++", "Java", "Python", "Go", "JavaScript"}
-
-type File struct {
-	ID        primitive.ObjectID `bson:"_id,omitempty"`
-	CreatedAt time.Time          `bson:"createdAt,omitempty"`
-	Timestamp time.Time          `bson:"timestamp,omitempty"`
-
-	Data     []byte `bson:"data,omitempty" json:"data"`
-	Name     string `bson:"name,omitempty" json:"name"`
-	Url      string `bson:"url,omitempty" json:"url"`
-	Password string `bson:"password,omitempty" json:"password,omitempty"`
-	Times    int    `bson:"times,omitempty" json:"times"`
-
-	Category string `bson:"category,omitempty" json:"category,omitempty"`
-
-	Highlight string `bson:"highlight" json:"highlight"`
-	Language  string `bson:"language,omitempty" json:"language,omitempty"`
-	Text      string `bson:"text,omitempty" json:"text,omitempty"`
-}
-
-type Verify struct {
-	ID        primitive.ObjectID `bson:"_id,omitempty"`
-	CreatedAt time.Time          `bson:"createdAt,omitempty"`
-	Timestamp time.Time          `bson:"timestamp,omitempty"`
-
-	SessionID string   `bson:"sessionID" json:"sessionID"`
-	Url       []string `bson:"url" json:"url"`
-}
-
-func DataInit(client *mongo.Client) {
-	collection := client.Database(Database).Collection("data")
-	model := mongo.IndexModel{
-		Keys:    bson.M{"createdAt": 1},
-		Options: options.Index().SetExpireAfterSeconds(0),
-	}
-	_, err := collection.Indexes().CreateOne(context.TODO(), model)
-	if err != nil {
-		log.Fatal(err)
-	}
-}
-
-func VerifyInit(client *mongo.Client) {
-	collection := client.Database(Database).Collection("verify")
-	model := mongo.IndexModel{
-		Keys:    bson.M{"createdAt": 1},
-		Options: options.Index().SetExpireAfterSeconds(30 * 60),
-	}
-	_, err := collection.Indexes().CreateOne(context.TODO(), model)
-	if err != nil {
-		log.Fatal(err)
-	}
-}
-
-func Installfile(client *mongo.Client, file File) {
-	collection := client.Database(Database).Collection("data")
-	one, err := collection.InsertOne(context.TODO(), file)
-	if err != nil {
-		panic(err)
-	}
-	fmt.Println(one)
-}
-
-func Uploadfile(c *gin.Context) (b []byte, s string, flag bool, e error, filesuffix string) {
-	file, fileheader, err := c.Request.FormFile("data")
-	name := fileheader.Filename
-	size := fileheader.Size
-	flag = false
-	if size > 20971520 {
-		c.JSON(http.StatusOK, gin.H{
-			"message": "POST",
-			"code":    0,
-			"data": gin.H{
-				"status": 10002,
-			},
-		})
-		flag = true
-	} else {
-		cpyname := name
-		result := strings.Split(cpyname, ".")
-		filesuffix = result[len(result)-1]
-		var check = false
-		for i := 0; i < len(suffix); i++ {
-			if filesuffix == suffix[i] {
-				check = true
-				break
-			}
-		}
-		if check != true {
-			c.JSON(http.StatusOK, gin.H{
-				"message": "POST",
-				"code":    0,
-				"data": gin.H{
-					"status": 10001,
-				},
-			})
-			flag = true
-		}
-	}
-	if err != nil {
-		return nil, name, flag, err, filesuffix
-	}
-	buf := bytes.NewBuffer(nil)
-	if _, err := io.Copy(buf, file); err != nil {
-		return nil, name, flag, err, filesuffix
-	}
-	return buf.Bytes(), name, flag, err, filesuffix
-}
-
-func Passwordverify(cilent *mongo.Client, s string, url string) bool {
-	i, file := Queryurl(cilent, url)
-	if i == 1 && file.Password == s {
-		return true
-	}
-	return false
-}
-
-func InsertVerify(client *mongo.Client, sessionID string, url string) {
-	collection := client.Database(Database).Collection("verify")
-	result := Verify{}
-	filter := bson.D{{"sessionID", sessionID}}
-	err := collection.FindOne(context.TODO(), filter).Decode(&result)
-	if err != nil {
-		if err == mongo.ErrNoDocuments {
-			// This error means your query did not match any documents.
-			var t = make([]string, 1)
-			t[0] = url
-			result = Verify{
-				ID:        primitive.ObjectID{},
-				CreatedAt: time.Now(),
-				Timestamp: time.Now(),
-				SessionID: sessionID,
-				Url:       t,
-			}
-			_, err := collection.InsertOne(context.TODO(), result)
-			if err != nil {
-				panic(err)
-			}
-		} else {
-			panic(err)
-		}
-	} else {
-		t := result.Url
-		t = append(t, url)
-		//t[len(t)] = url
-		_, err := collection.UpdateOne(context.TODO(), filter, bson.D{{"$set", bson.D{{"url", t}}}})
-		if err != nil {
-			log.Fatal(err)
-		}
-	}
-}
-
+/**
+ * 连接数据库。
+ * 值得注意的是调用了 DataInit(client) 和 VerifyInit(client)，这是MongoDB TTL功能的要求：开启计时器以支持自动删除功能。
+ * @return : *mongo.Client
+ */
 func con() *mongo.Client {
 	serverAPIOptions := options.ServerAPI(options.ServerAPIVersion1)
 	clientOptions := options.Client().
@@ -198,6 +51,13 @@ func con() *mongo.Client {
 	return client
 }
 
+/**
+ *
+ *
+ * @param a :
+ * @param b :
+ * @return :
+ */
 func setupRouter(client *mongo.Client) *gin.Engine {
 	r := gin.Default()
 
@@ -205,53 +65,33 @@ func setupRouter(client *mongo.Client) *gin.Engine {
 		//param := c.Request.URL.RawQuery
 	})
 
+	/**
+	 * POST方法，接收包含密码的表单。查数据库进行比对，如果通过就设置一条cookie，向数据库中添加临时条目（过期时间为 30 分钟），内容为用户的 sessionId 和该 sessionId 已被授权访问的网页地址。
+	 */
 	r.POST("/pastebin/verify", func(c *gin.Context) {
 		password := c.PostForm("password")
 		param := c.Request.URL.RawQuery
 		result := strings.Split(param, "=")
-		paramurl := result[len(result)-1]
-		fmt.Println(password)
-		fmt.Println(paramurl)
-		if Passwordverify(client, password, paramurl) == true {
+		paramUrl := result[len(result)-1]
+		if passwordVerify(client, password, paramUrl) == true { // 密码正确
 
 			sessionID, err := c.Cookie("sessionID")
 			if err != nil {
-				sessionID = Generateurl()
+				sessionID = generateUrl()
 				c.SetCookie("sessionID", sessionID, 1800, "/", "localhost", false, true)
 			}
-			c.String(http.StatusOK, "VERIFY SUCCESS!")
-			InsertVerify(client, sessionID, paramurl)
-			c.Redirect(http.StatusMovedPermanently, "/pastebin/"+paramurl)
-		} else {
-			c.String(http.StatusOK, "VERIFY FAIL!")
-		}
-	})
-
-	r.POST("/pastebin/file", func(c *gin.Context) {
-		var file = new(File)
-		times := c.DefaultPostForm("times", "1")
-		file.Times, _ = strconv.Atoi(times)
-		expire := c.DefaultPostForm("expire", "3600")
-		intExpire, _ := strconv.Atoi(expire)
-		file.Password = c.PostForm("password")
-		file.Url = Generateurl()
-		file.Timestamp = time.Now()
-		file.CreatedAt = time.Now().Add(time.Second * time.Duration(intExpire))
-		var flag bool
-		var err error
-		file.Data, file.Name, flag, err, file.Category = Uploadfile(c)
-		fmt.Println(file.Category + "QQQ")
-		if flag == false && err == nil {
-			Installfile(client, *file)
+			//c.String(http.StatusOK, "VERIFY SUCCESS!")
 			c.JSON(http.StatusOK, gin.H{
 				"message": "POST",
 				"code":    0,
 				"data": gin.H{
 					"status": 0,
-					"url":    file.Url,
 				},
 			})
-		} else if err != nil {
+			InsertVerify(client, sessionID, paramUrl)
+			c.Redirect(http.StatusMovedPermanently, "/pastebin/"+paramUrl)
+		} else { //密码错误
+			//c.String(http.StatusOK, "VERIFY FAIL!")
 			c.JSON(http.StatusOK, gin.H{
 				"message": "POST",
 				"code":    0,
@@ -262,94 +102,151 @@ func setupRouter(client *mongo.Client) *gin.Engine {
 		}
 	})
 
-	r.POST("/pastebin/submit", func(c *gin.Context) {
-		var file = new(File)
+	/**
+	 * POST方法，接收包含文件数据的表单。
+	 * 初始化文件数据结构File，然后对数据进行校验，若通过则加入数据库
+	 *
+	 */
+	r.POST("/pastebin/file", func(c *gin.Context) {
+		var fileStruct = new(File)
+		// 允许访问的次数（默认1
 		times := c.DefaultPostForm("times", "1")
-		file.Times, _ = strconv.Atoi(times)
+		fileStruct.Times, _ = strconv.Atoi(times)
+		// 到期自动删除的时间（默认3600s = 60min
 		expire := c.DefaultPostForm("expire", "3600")
 		intExpire, _ := strconv.Atoi(expire)
+		// 设置MongoDB的TTL
+		fileStruct.Timestamp = time.Now()
+		fileStruct.CreatedAt = time.Now().Add(time.Second * time.Duration(intExpire))
+		// 密码和Url
+		fileStruct.Password = c.PostForm("password")
+		fileStruct.Url = generateUrl()
+
+		var result bool
+		var err error
+		// 获取上传的文件头
+		file, fileHeader, err := c.Request.FormFile("data")
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"message": "POST",
+				"code":    0,
+				"data": gin.H{
+					"status": 10003,
+				},
+			})
+		} else {
+			fileStruct.Name = fileHeader.Filename
+			//处理文件数据并校验
+			fileStruct.Data, result, fileStruct.Category = getFileData(c, file, fileHeader)
+			if result == true { // 通过校验
+				err2 := installFile(client, *fileStruct)
+				if err2 != nil {
+					c.JSON(http.StatusOK, gin.H{
+						"message": "POST",
+						"code":    0,
+						"data": gin.H{
+							"status": 10003,
+						},
+					})
+				} else { //不通过校验
+					c.JSON(http.StatusOK, gin.H{
+						"message": "POST",
+						"code":    0,
+						"data": gin.H{
+							"status": 0,
+							"url":    fileStruct.Url,
+						},
+					})
+				}
+			}
+		}
+
+	})
+
+	/**
+	 * POST方法，接收包含上传的代码的表单。
+	 *
+	 */
+	r.POST("/pastebin/submit", func(c *gin.Context) {
+		var file = new(File)
+		// 下载次数（默认1
+		times := c.DefaultPostForm("times", "1")
+		file.Times, _ = strconv.Atoi(times)
+		// 过期时间（默认3600s = 60min
+		expire := c.DefaultPostForm("expire", "3600")
+		intExpire, _ := strconv.Atoi(expire)
+		// 密码
 		file.Password = c.PostForm("password")
-		file.Url = Generateurl()
+		file.Url = generateUrl()
+		// MongoDB TTL 时间戳
 		file.Timestamp = time.Now()
 		file.CreatedAt = time.Now().Add(time.Second * time.Duration(intExpire))
 
-		file.Highlight = c.PostForm("times")
+		file.Highlight = c.PostForm("highlight")
 		file.Text = c.PostForm("text")
-		language := c.PostForm("language")
-		file.Language = language
-
-		Installfile(client, *file)
-		c.JSON(http.StatusOK, gin.H{
-			"message": "POST",
-			"code":    0,
-			"data": gin.H{
-				"status": 0,
-				"url":    file.Url,
-			},
-		})
-
+		file.Language = c.PostForm("language")
+		//上传加入数据库并处理错误
+		err := installFile(client, *file)
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"message": "POST",
+				"code":    0,
+				"data": gin.H{
+					"status": 10001,
+					"url":    "",
+				},
+			})
+		} else {
+			c.JSON(http.StatusOK, gin.H{
+				"message": "POST",
+				"code":    0,
+				"data": gin.H{
+					"status": 0,
+					"url":    file.Url,
+				},
+			})
+		}
 	})
 
 	r.GET("/pastebin/:path", func(c *gin.Context) {
 		//c.Header("Content-Type", "text/markdown")
 		path := c.Param("path")
 		sessionID, _ := c.Cookie("sessionID")
-		fmt.Println(sessionID)
-		fmt.Println(path)
-		if VerifySessionID(client, sessionID, path) == true {
+		if VerifySessionID(client, sessionID, path) == true { // 检查有无有效的sessionID
 			path := c.Param("path")
-			_, FILE := Queryurl(client, path)
-			fmt.Println(FILE.Category)
-			switch FILE.Category {
-			case "txt":
-				c.Header("Content-Type", "text/plain")
-			case "md":
-				c.Header("Content-Type", "text/markdown")
-			case "csv":
-				c.Header("Content-Type", "text/csv")
-			case "tex":
-				c.Header("Content-Type", "text/x-tex")
-			default:
-				c.Header("Content-Type", "text/plain")
+			result, FILE := queryUrl(client, path)
+			if result {
+				switch FILE.Category {
+				case "txt":
+					c.Header("Content-Type", "text/plain")
+				case "md":
+					c.Header("Content-Type", "text/markdown")
+				case "csv":
+					c.Header("Content-Type", "text/csv")
+				case "tex":
+					c.Header("Content-Type", "text/x-tex")
+				default:
+					c.Header("Content-Type", "text/plain")
+				}
+				returnData(client, c)
+			} else {
+				c.JSON(http.StatusOK, gin.H{ // TODO: API update
+					"message": "GET",
+					"code":    0,
+					"data": gin.H{
+						"status": 10001, // 获取不到文件（数据库找不到文件）
+						"url":    path,
+					},
+				})
 			}
-			returnData(client, c)
+
 		} else {
 			c.Redirect(http.StatusMovedPermanently, "/pastebin/verify?url="+path)
 		}
 
 	})
+
 	return r
-}
-
-func returnData(client *mongo.Client, c *gin.Context) {
-	path := c.Param("path")
-	status, FILE := Queryurl(client, path)
-	if status == 0 || FILE.Times <= 0 {
-		c.JSON(http.StatusNotFound, gin.H{
-			"message": "GET",
-			"code":    0,
-			"data":    "",
-		})
-	} else {
-		Updateurl(client, path)
-
-		if FILE.Highlight == "" {
-			permissions := 0777 // or whatever you need
-			err := ioutil.WriteFile("file", FILE.Data, fs.FileMode(permissions))
-			if err != nil {
-				log.Fatal(err)
-			}
-			c.FileAttachment("file", FILE.Name)
-		} else {
-			c.JSON(http.StatusOK, gin.H{
-				"message": "",
-				"code":    0,
-				"data": gin.H{
-					"text": FILE.Text,
-				},
-			})
-		}
-	}
 }
 
 func main() {
