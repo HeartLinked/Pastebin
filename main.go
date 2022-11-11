@@ -15,7 +15,6 @@ import (
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -52,11 +51,7 @@ func con() *mongo.Client {
 }
 
 /**
- *
- *
- * @param a :
- * @param b :
- * @return :
+ * 为服务提供各种路由方法。
  */
 func setupRouter(client *mongo.Client) *gin.Engine {
 	r := gin.Default()
@@ -71,27 +66,25 @@ func setupRouter(client *mongo.Client) *gin.Engine {
 	 */
 	r.POST("/pastebin/verify", func(c *gin.Context) {
 		password := c.PostForm("password")
-		param := c.Request.URL.RawQuery
+		paramUrl := c.PostForm("url")
+		/*param := c.Request.URL.RawQuery
 		result := strings.Split(param, "=")
-		paramUrl := result[len(result)-1]
-		if passwordVerify(client, password, paramUrl) == true { // 密码正确
-
+		paramUrl := result[len(result)-1]*/
+		logrus.Info("Verify url + " + paramUrl + " with password: " + password)
+		if passwordVerify(client, password, paramUrl) == true {
+			// 密码正确
 			sessionID, err := c.Cookie("sessionID")
 			if err != nil {
 				sessionID = generateUrl()
+				logrus.Info("Rand sessionID generated:" + sessionID)
 				c.SetCookie("sessionID", sessionID, 1800, "/", "localhost", false, true)
 			}
 			//c.String(http.StatusOK, "VERIFY SUCCESS!")
-			c.JSON(http.StatusOK, gin.H{
-				"message": "POST",
-				"code":    0,
-				"data": gin.H{
-					"status": 0,
-				},
-			})
 			InsertVerify(client, sessionID, paramUrl)
-			c.Redirect(http.StatusMovedPermanently, "/pastebin/"+paramUrl)
-		} else { //密码错误
+			logrus.Info("Verify succeeded, redirect to: " + paramUrl)
+			c.Redirect(http.StatusFound, "/pastebin/"+paramUrl)
+		} else {
+			//密码错误
 			//c.String(http.StatusOK, "VERIFY FAIL!")
 			c.JSON(http.StatusOK, gin.H{
 				"message": "POST",
@@ -109,6 +102,7 @@ func setupRouter(client *mongo.Client) *gin.Engine {
 	 *
 	 */
 	r.POST("/pastebin/file", func(c *gin.Context) {
+		logrus.Info("POST： submit file data")
 		var fileStruct = new(File)
 		// 允许访问的次数（默认1
 		times := c.DefaultPostForm("times", "1")
@@ -122,12 +116,13 @@ func setupRouter(client *mongo.Client) *gin.Engine {
 		// 密码和Url
 		fileStruct.Password = c.PostForm("password")
 		fileStruct.Url = generateUrl()
-
+		logrus.Info("Rnd url generated：" + fileStruct.Url)
 		var result bool
-		var err error
+		//var err error
 		// 获取上传的文件头
 		file, fileHeader, err := c.Request.FormFile("data")
 		if err != nil {
+			logrus.Error("Submit file: unknown error!" + err.Error())
 			c.JSON(http.StatusOK, gin.H{
 				"message": "POST",
 				"code":    0,
@@ -180,11 +175,17 @@ func setupRouter(client *mongo.Client) *gin.Engine {
 		// 密码
 		file.Password = c.PostForm("password")
 		file.Url = generateUrl()
+		logrus.Info("Url generated : " + file.Url)
 		// MongoDB TTL 时间戳
 		file.Timestamp = time.Now()
 		file.CreatedAt = time.Now().Add(time.Second * time.Duration(intExpire))
 
-		file.Highlight = c.PostForm("highlight")
+		if c.PostForm("highlight") == "true" {
+			file.Highlight = true
+		} else {
+			file.Highlight = false
+		}
+
 		file.Text = c.PostForm("text")
 		file.Language = c.PostForm("language")
 		//上传加入数据库并处理错误
@@ -242,7 +243,7 @@ func setupRouter(client *mongo.Client) *gin.Engine {
 					},
 				})
 			} else if result && FILE.Times > 0 {
-				logrus.Info("Return Data: (category:" + FILE.Category + ")")
+
 				switch FILE.Category {
 				case "txt":
 					c.Header("Content-Type", "text/plain")

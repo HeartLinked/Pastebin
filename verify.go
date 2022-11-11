@@ -55,7 +55,7 @@ func VerifyInit(client *mongo.Client) {
  */
 func passwordVerify(client *mongo.Client, s string, url string) bool {
 	_, i, file := queryUrl(client, url)
-	if i == false && file.Password == s {
+	if i == true && file.Password == s {
 		logrus.Info("Password Verify succeed!")
 		return true
 	}
@@ -92,7 +92,7 @@ func InsertVerify(client *mongo.Client, sessionID string, url string) {
 			}
 			_, err := collection.InsertOne(context.TODO(), result)
 			if err != nil { // 向数据库插入 Session 出错
-				logrus.Error("Failed to write file from database!")
+				logrus.Error("Failed to write session to database!")
 			}
 		} else {
 			logrus.Error("Failed to query file from database!")

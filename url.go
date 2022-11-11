@@ -36,7 +36,6 @@ func generateUrl() string {
 		length := rand.Intn(25)
 		if length > 15 {
 			url := randStr(length)
-			logrus.Info("Rand url generated:" + url)
 			return url
 		}
 	}
@@ -60,7 +59,7 @@ func queryUrl(client *mongo.Client, s string) (error, bool, File) {
 			logrus.Info("Query data from url:" + s + ", result: FAIL")
 			return nil, false, result
 		} else {
-			logrus.Error("ERROR in query data using url:" + s)
+			logrus.Error("ERROR in query data using url: " + err.Error())
 			return err, false, result
 		}
 	}
@@ -117,13 +116,13 @@ func verifySessionID(client *mongo.Client, s string, url string) (error, bool) {
 			logrus.Info("Verify SessionID:" + s + "with url:" + url + ", Result: FAIL")
 			return nil, false
 		} else {
-			logrus.Error("Failed to verify sessionID!")
+			logrus.Error("ERROR to verify sessionID :" + err.Error())
 			return err, false
 		}
 	}
 	for _, Url := range result.Url {
 		if Url == url {
-			logrus.Info("Verify SessionID:" + s + "with url:" + url + ", Result: FAIL")
+			logrus.Info("Verify SessionID:" + s + "with url:" + url + ", Result: SUCCESS")
 			return nil, true
 		}
 	}

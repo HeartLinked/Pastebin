@@ -17,9 +17,9 @@ import (
 	"io"
 	"io/fs"
 	"io/ioutil"
-	"log"
 	"mime/multipart"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -43,11 +43,11 @@ type File struct {
 	Data  []byte `bson:"data,omitempty" json:"data"`
 
 	// 对于文件：文件名，后缀名
-	Name     string `bson:"name,omitempty" json:"name"`
+	Name     string `bson:"name,omitempty" json:"name,omitempty"`
 	Category string `bson:"category,omitempty" json:"category,omitempty"`
 
 	// 对于代码：是否高亮，语言类型，文本内容
-	Highlight string `bson:"highlight" json:"highlight"`
+	Highlight bool   `bson:"highlight,omitempty" json:"highlight,omitempty"`
 	Language  string `bson:"language,omitempty" json:"language,omitempty"`
 	Text      string `bson:"text,omitempty" json:"text,omitempty"`
 }
@@ -176,7 +176,7 @@ func returnData(client *mongo.Client, c *gin.Context) {
 	_, _, FILE := queryUrl(client, path)
 	updateData(client, path)
 	// 如果是文件类型
-	if FILE.Highlight == "" {
+	if FILE.Text == "" {
 		permissions := 0777 // or whatever you need
 		err := ioutil.WriteFile("file", FILE.Data, fs.FileMode(permissions))
 		if err != nil {
@@ -188,16 +188,18 @@ func returnData(client *mongo.Client, c *gin.Context) {
 					"status": 10001,
 				},
 			})
-			log.Fatal(err)
+			logrus.Error("ERROR in writing data to database: " + err.Error())
 		}
 		c.FileAttachment("file", FILE.Name)
 	} else {
 		// 如果是代码类型
+		logrus.Info("Return Data: (plain text, highlight =" + strconv.FormatBool(FILE.Highlight) + ")")
 		c.JSON(http.StatusOK, gin.H{
-			"message": "",
+			"message": "GET",
 			"code":    0,
 			"data": gin.H{
-				"text": FILE.Text,
+				"highlight": FILE.Highlight,
+				"text":      FILE.Text,
 			},
 		})
 	}
